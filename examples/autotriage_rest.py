@@ -6,6 +6,7 @@ import sys
 import json
 import requests
 import time
+import traceback
 
 # Valid triage statuses
 VALID_STATUSES = {
@@ -54,7 +55,7 @@ def load_environment():
     
     return auth_token, domain
 
-def get_findings(token, domain, artifact_id, component_name=None, component_version=None):
+def get_findings(token, domain, artifact_id, component_name=None, component_version=None, debug=False):
     """
     Get findings for an artifact using the REST API.
     """
@@ -77,79 +78,91 @@ def get_findings(token, domain, artifact_id, component_name=None, component_vers
         "limit": 10000  # Set a large limit to get all findings
     }
     
-    print(f"\nDEBUG: Making API request to {url}")
-    print(f"DEBUG: Headers: {json.dumps(headers, indent=2)}")
-    print(f"DEBUG: Params: {json.dumps(params, indent=2)}")
+    if debug:
+        print(f"\nDEBUG: Making API request to {url}")
+        print(f"DEBUG: Headers: {json.dumps(headers, indent=2)}")
+        print(f"DEBUG: Params: {json.dumps(params, indent=2)}")
     
     try:
         response = requests.get(url, headers=headers, params=params)
-        print(f"DEBUG: Response status code: {response.status_code}")
-        print(f"DEBUG: Response headers: {json.dumps(dict(response.headers), indent=2)}")
+        if debug:
+            print(f"DEBUG: Response status code: {response.status_code}")
+            print(f"DEBUG: Response headers: {json.dumps(dict(response.headers), indent=2)}")
         
         if response.status_code != 200:
-            print(f"DEBUG: Response body: {response.text}")
+            if debug:
+                print(f"DEBUG: Response body: {response.text}")
             raise Exception(f"Failed to get findings: Status {response.status_code} - {response.text}")
         
         findings = response.json()
-        print(f"DEBUG: Found {len(findings)} findings")
+        if debug:
+            print(f"DEBUG: Found {len(findings)} findings")
         return findings
         
     except requests.exceptions.RequestException as e:
-        print(f"DEBUG: Request failed: {str(e)}")
+        if debug:
+            print(f"DEBUG: Request failed: {str(e)}")
         raise Exception(f"Failed to get findings: {str(e)}")
     except json.JSONDecodeError as e:
-        print(f"DEBUG: Failed to parse response as JSON: {str(e)}")
-        print(f"DEBUG: Response content: {response.text}")
+        if debug:
+            print(f"DEBUG: Failed to parse response as JSON: {str(e)}")
+            print(f"DEBUG: Response content: {response.text}")
         raise Exception(f"Failed to parse findings response: {str(e)}")
     except Exception as e:
-        print(f"DEBUG: Unexpected error: {str(e)}")
+        if debug:
+            print(f"DEBUG: Unexpected error: {str(e)}")
         raise
 
-def update_finding_status(token, domain, finding_id, status, justification=None, comment=None):
+def update_finding_status(token, domain, project_version_id, finding_id, status, justification=None, response=None, reason=None, debug=False):
     """
     Update a finding's status using the Swagger API.
     """
-    url = f"{get_api_base_url()}/findings/{finding_id}/status"
+    # Set defaults if missing
+    if not justification:
+        print(f"[WARN] No justification provided for finding {finding_id}, using default: CODE_NOT_PRESENT")
+        justification = "CODE_NOT_PRESENT"
+    if not response:
+        print(f"[WARN] No response provided for finding {finding_id}, using default: WILL_NOT_FIX")
+        response = "WILL_NOT_FIX"
+    data = {
+        "status": status,
+        "justification": justification,
+        "response": response
+    }
+    if reason:
+        data["reason"] = reason
+    url = f"{get_api_base_url()}/findings/{project_version_id}/{finding_id}/status"
     headers = {
         "X-Authorization": token,
         "Content-Type": "application/json"
     }
-    
-    # Handle status that might be a dictionary
-    if isinstance(status, dict):
-        status = status.get('status')
-    
-    # Prepare the request body according to the Swagger API spec
-    data = {
-        "status": status,
-        "comment": comment or "",
-        "justification": justification or ""
-    }
-    
-    print(f"\nDEBUG: Making API request to {url}")
-    print(f"DEBUG: Headers: {json.dumps(headers, indent=2)}")
-    print(f"DEBUG: Data: {json.dumps(data, indent=2)}")
-    
+    if debug:
+        print(f"\nDEBUG: Making API request to {url}")
+        print(f"DEBUG: Headers: {json.dumps(headers, indent=2)}")
+        print(f"DEBUG: Data: {json.dumps(data, indent=2)}")
+    print(f"Updating finding at URL: {url}")
     try:
-        response = requests.put(url, headers=headers, json=data)
-        print(f"DEBUG: Response status code: {response.status_code}")
-        print(f"DEBUG: Response headers: {json.dumps(dict(response.headers), indent=2)}")
-        
-        if response.status_code != 200:
-            print(f"DEBUG: Response body: {response.text}")
-            raise Exception(f"Failed to update finding status: Status {response.status_code} - {response.text}")
-        
-        return response.json()
-        
+        response_obj = requests.put(url, headers=headers, json=data)
+        if debug:
+            print(f"DEBUG: Response status code: {response_obj.status_code}")
+            print(f"DEBUG: Response headers: {json.dumps(dict(response_obj.headers), indent=2)}")
+        if response_obj.status_code not in (200, 204):
+            if debug:
+                print(f"DEBUG: Response body: {response_obj.text}")
+            raise Exception(f"Failed to update finding status: Status {response_obj.status_code} - {response_obj.text}")
+        return response_obj.json()
     except requests.exceptions.RequestException as e:
-        print(f"DEBUG: Request failed: {str(e)}")
+        if debug:
+            print(f"DEBUG: Request failed: {str(e)}")
         raise Exception(f"Failed to update finding status: {str(e)}")
     except json.JSONDecodeError as e:
-        print(f"DEBUG: Failed to parse response as JSON: {str(e)}")
-        print(f"DEBUG: Response content: {response.text}")
+        if debug:
+            print(f"DEBUG: Failed to parse response as JSON: {str(e)}")
+            print(f"DEBUG: Response content: {response_obj.text}")
         raise Exception(f"Failed to parse update response: {str(e)}")
     except Exception as e:
-        print(f"DEBUG: Unexpected error: {str(e)}")
+        if debug:
+            print(f"DEBUG: Unexpected error: {str(e)}")
         raise
 
 def get_status_value(status):
@@ -185,7 +198,7 @@ def view_findings(token, domain, artifact_id, component_name=None, component_ver
     Optionally filter by component name and version.
     """
     # Get all findings for the artifact
-    findings = get_findings(token, domain, artifact_id, component_name, component_version)
+    findings = get_findings(token, domain, artifact_id, component_name, component_version, debug)
     
     if not findings:
         print("No findings found for the artifact")
@@ -244,10 +257,11 @@ def view_findings(token, domain, artifact_id, component_name=None, component_ver
             status = get_status_value(raw_status)
             print(f"DEBUG: Processed status: {status}")
             print(f"DEBUG: Processed status type: {type(status)}")
+            print(f"DEBUG: VALID_STATUSES: {VALID_STATUSES} (type: {type(VALID_STATUSES)})")
             print(f"DEBUG: Is status in VALID_STATUSES? {status in VALID_STATUSES}")
             
             # Count statuses
-            if status in VALID_STATUSES:
+            if status and status != 'UNTRIAGED' and status in VALID_STATUSES:
                 print(f"DEBUG: Incrementing count for status: {status}")
                 status_counts[status] += 1
             else:
@@ -271,10 +285,10 @@ def view_findings(token, domain, artifact_id, component_name=None, component_ver
 def get_component_triage_rules(token, domain, artifact_id, component_name=None, component_version=None, debug=False):
     """
     Get triage rules for specific components or all components from a source artifact.
-    Returns a dictionary mapping component names and versions to their triage statuses.
+    Returns a dictionary mapping component names and versions to their triage statuses and comments.
     """
     # Get all findings for the source artifact
-    findings = get_findings(token, domain, artifact_id, component_name, component_version)
+    findings = get_findings(token, domain, artifact_id, component_name, component_version, debug)
     
     if not findings:
         print("No findings found for the artifact")
@@ -297,16 +311,35 @@ def get_component_triage_rules(token, domain, artifact_id, component_name=None, 
         status = get_status_value(finding.get('status'))
         component = finding.get('component')
         name, version = get_component_key(component)
-        
+        comment = finding.get('comment') if finding.get('comment') else None
+        justification = finding.get('justification') if finding.get('justification') else None
+        response = finding.get('response') if finding.get('response') else None
+        # Create rule with string status
+        rule = {
+            'status': status,
+            'finding_id': finding.get('findingId'),
+            'vulnerability': finding.get('vulnerabilityId') or finding.get('findingId'),
+            'title': finding.get('title', 'Unknown'),
+            'description': finding.get('description', ''),
+            'comment': comment
+        }
+        if justification:
+            rule['justification'] = justification
+        if response:
+            rule['response'] = response
+                
         if debug:
             print(f"\nProcessing finding:")
             print(f"ID: {finding.get('findingId', 'Unknown')}")
             print(f"Status: {status}")
             print(f"Component: {name} v{version}")
-            print(f"Raw finding data: {json.dumps(finding, indent=2)}")
+            print(f"Vulnerability: {finding.get('vulnerabilityId', 'Unknown')}")
+            print(f"Comment: {comment}")
         
         # Only process findings that have been triaged with valid status
-        if status in VALID_STATUSES:
+        if debug:
+            print(f"DEBUG: VALID_STATUSES: {VALID_STATUSES} (type: {type(VALID_STATUSES)})")
+        if status and status != 'UNTRIAGED' and status in VALID_STATUSES:
             if name:
                 # Use component name as key if no version specified
                 key = f"{name}:{version}" if version else name
@@ -322,7 +355,8 @@ def get_component_triage_rules(token, domain, artifact_id, component_name=None, 
                     'finding_id': finding.get('findingId'),
                     'vulnerability': vulnerability_id,
                     'title': finding.get('title', 'Unknown'),
-                    'description': finding.get('description', '')
+                    'description': finding.get('description', ''),
+                    'comment': comment
                 }
                 
                 triage_rules[key].append(rule)
@@ -340,7 +374,7 @@ def get_component_triage_rules(token, domain, artifact_id, component_name=None, 
         for key, rules in triage_rules.items():
             print(f"\n{key}:")
             for rule in rules:
-                print(f"  - {rule['vulnerability']}: {rule['status']}")
+                print(f"  - {rule['vulnerability']}: {rule['status']} (comment: {rule['comment']})")
     
     return triage_rules
 
@@ -350,7 +384,7 @@ def apply_triage_rules(token, domain, target_artifact_id, triage_rules, source_a
     If dry_run is True, only print what would be changed without making changes.
     """
     # Get all findings for the target artifact
-    target_findings = get_findings(token, domain, target_artifact_id)
+    target_findings = get_findings(token, domain, target_artifact_id, debug=debug)
     
     if not target_findings:
         print("No findings found for the target artifact")
@@ -393,7 +427,7 @@ def apply_triage_rules(token, domain, target_artifact_id, triage_rules, source_a
                     print(f"Found matching component: {key}")
                     print("Available rules:")
                     for rule in triage_rules[key]:
-                        print(f"  - {rule['vulnerability']}: {rule['status']}")
+                        print(f"  - {rule['vulnerability']}: {rule['status']} (comment: {rule['comment']})")
                 
                 # Find the matching vulnerability in the rules
                 matching_rule = None
@@ -414,28 +448,50 @@ def apply_triage_rules(token, domain, target_artifact_id, triage_rules, source_a
                 
                 # Get current status, handling dictionary case
                 current_status = get_status_value(finding.get('status'))
+                current_comment = finding.get('comment') if finding.get('comment') else None
+                source_comment = matching_rule['comment'] if matching_rule else None
                 
-                if matching_rule and current_status != matching_rule['status']:
-                    if not finding_id:
-                        if debug:
-                            print(f"\nSkipping finding - no valid ID")
-                        continue
-                        
-                    update = {
-                        'id': finding_id,
-                        'status': matching_rule['status'],
-                        'component': name,
-                        'version': version,
-                        'vulnerability': vulnerability_id
-                    }
-                    updated_findings.append(update)
-                    if debug:
+                status_changed = matching_rule and current_status != matching_rule['status']
+                comment_changed = matching_rule and current_comment != source_comment
+                
+                should_update = False
+                # When building update_payload, add justification, response, and reason fields if present
+                update_payload = {
+                    'id': finding_id,
+                    'status': matching_rule['status'] if matching_rule else None,
+                    'component': name,
+                    'version': version,
+                    'vulnerability': vulnerability_id
+                }
+                if matching_rule:
+                    if 'justification' in matching_rule and matching_rule['justification']:
+                        update_payload['justification'] = matching_rule['justification']
+                    if 'response' in matching_rule and matching_rule['response']:
+                        update_payload['response'] = matching_rule['response']
+                # Place comment in reason
+                if source_comment is not None:
+                    update_payload['reason'] = source_comment
+                
+                if status_changed:
+                    should_update = True
+                    # If source has a comment, use it. If not, and audit is set, and both source and target have no comment, add traceability comment
+                    if source_comment is not None:
+                        update_payload['comment'] = source_comment
+                
+                if should_update:
+                    updated_findings.append(update_payload)
+                    if debug or dry_run:
                         print(f"\nWould update finding:")
                         print(f"Finding ID: {finding_id}")
                         print(f"Vulnerability ID: {vulnerability_id}")
                         print(f"Component: {name} v{version}")
                         print(f"Current status: {current_status}")
-                        print(f"New status: {matching_rule['status']}")
+                        print(f"Current comment: {current_comment}")
+                        print(f"New status: {update_payload.get('status')}")
+                        print(f"New comment: {update_payload.get('comment')}")
+                        if not update_payload.get('comment') and not current_comment:
+                            print("(Traceability comment will be added)")
+                        print("---")
             elif debug:
                 print(f"No matching component found for {key}")
                 unmatched_findings.append({
@@ -451,7 +507,28 @@ def apply_triage_rules(token, domain, target_artifact_id, triage_rules, source_a
             print(f"Finding ID: {update['id']}")
             print(f"Vulnerability ID: {update['vulnerability']}")
             print(f"Component: {update['component']} (v{update['version']})")
-            print(f"Status: {update['status']}")
+            print(f"Status: {update.get('status')}")
+            # Show old and new justification, response, and reason (comment) for dry run
+            old_justification = None
+            old_response = None
+            old_reason = None
+            for finding in target_findings:
+                if finding.get('id') == update['id']:
+                    old_justification = finding.get('justification')
+                    old_response = finding.get('response')
+                    old_reason = finding.get('reason') if finding.get('reason') else finding.get('comment')
+                    break
+            new_justification = update.get('justification') or "CODE_NOT_PRESENT"
+            new_response = update.get('response') or "WILL_NOT_FIX"
+            new_reason = update.get('reason')
+            if new_reason is None and source_comment is not None:
+                new_reason = source_comment
+            print(f"Old justification: {old_justification}")
+            print(f"New justification: {new_justification}")
+            print(f"Old response: {old_response}")
+            print(f"New response: {new_response}")
+            print(f"Old reason: {old_reason}")
+            print(f"New reason: {new_reason}")
             print("---")
         
         if not dry_run:
@@ -479,10 +556,13 @@ def apply_triage_rules(token, domain, target_artifact_id, triage_rules, source_a
                             update_finding_status(
                                 token=token,
                                 domain=domain,
+                                project_version_id=target_artifact_id,
                                 finding_id=update['id'],
                                 status=update['status'],
-                                justification='COMPONENT_NOT_PRESENT' if update['status'] == 'NOT_AFFECTED' else None,
-                                comment=f'Replicated from source artifact {source_artifact_id}'
+                                justification=update.get('justification'),
+                                response=update.get('response'),
+                                reason=update.get('reason'),
+                                debug=debug
                             )
                             success = True
                             break
@@ -510,7 +590,8 @@ def apply_triage_rules(token, domain, target_artifact_id, triage_rules, source_a
                     print(f"Finding ID: {update['id']}")
                     print(f"Vulnerability ID: {update['vulnerability']}")
                     print(f"Component: {update['component']} (v{update['version']})")
-                    print(f"Status: {update['status']}")
+                    print(f"Status: {update.get('status')}")
+                    print(f"New comment: {update.get('comment')}")
                     print("---")
         else:
             print(f"\nDry run: Would update {len(updated_findings)} findings in target artifact")
@@ -543,7 +624,7 @@ def main():
         auth_token, domain = load_environment()
         
         # Always enable debug output for now to help diagnose issues
-        args.debug = True
+        # args.debug = True
         
         if args.view:
             if not args.source_artifact:
@@ -574,8 +655,13 @@ def main():
             print(f"Applying triage rules to target artifact {args.target_artifact}...")
             apply_triage_rules(auth_token, domain, args.target_artifact, triage_rules, args.source_artifact, args.dry_run, args.debug)
         
+    except TypeError as e:
+        print(f"TypeError: {e}")
+        traceback.print_exc()
+        sys.exit(1)
     except Exception as e:
         print(f"Error: {str(e)}", file=sys.stderr)
+        traceback.print_exc()
         sys.exit(1)
 
 if __name__ == '__main__':

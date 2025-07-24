@@ -1,103 +1,165 @@
-# Finite State REST API Reports
+# Finite State REST API Scripts
 
-This directory contains reports that use the Finite State REST API instead of GraphQL. These reports are designed to be more efficient and provide additional features like date range filtering and parallel processing.
+A collection of Python CLI tools that interact with the Finite State REST API to generate reports and perform various operations.
 
-## Setup
+## Current Scripts
 
-### Prerequisites
-- Python 3.7 or higher
-- aiohttp package (`pip install aiohttp`)
+### License Report Generator (`report_license.py`)
 
-### Environment Variables
-Set the following environment variables:
+A comprehensive tool that pulls license data from the Finite State REST API and generates reports in CSV, JSON, and searchable HTML formats.
+
+**Features:**
+- **Flexible Output Formats**: Generate CSV, JSON, and searchable HTML reports
+- **Smart Project Selection**: Use project ID, project name, or specific version ID
+- **Rate Limiting**: Built-in exponential backoff for API rate limits
+
+## Prerequisites
+
+- Python ≥ 3.11 (tested on 3.12)
+- Finite State API access token
+- Required Python packages (see requirements.txt)
+
+## Installation
+
+### Option 1: Automated Setup (Recommended)
+
+Use the provided setup script for a quick, automated installation:
+
 ```bash
-export FINITE_STATE_URL="https://roland.finitestate.io"
-export FINITE_STATE_TOKEN="your_api_token"
+# Make the script executable (if needed)
+chmod +x setup_rest_tools.sh
+
+# Run the setup script
+./setup_rest_tools.sh
 ```
 
-Or provide them as command-line arguments:
+The setup script will:
+- Check Python version requirements (3.11+)
+- Create a virtual environment
+- Install all dependencies
+- Verify environment variables
+- Provide next steps and examples
+
+After running the setup script, activate the environment:
 ```bash
-python report_asset_risk_scores.py --url "https://roland.finitestate.io" --token "your_api_token"
+source .venv/bin/activate
 ```
 
-## Available Reports
+### Option 2: Manual Installation
 
-### Asset Risk Scores Report
-**Script:** `report_asset_risk_scores.py`
-**Purpose:** Analyze risk scores across all assets to identify high-risk items.
-**Usage:**
+If you prefer manual installation or the setup script doesn't work for your environment:
+
+1. **Clone or navigate to the project directory:**
+   ```bash
+   cd /path/to/finite-state-sdk-python/examples/REST
+   ```
+
+2. **Create and activate a virtual environment:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   ```
+
+3. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Set up environment variables:**
+   ```bash
+   export FINITE_STATE_AUTH_TOKEN="your_api_token_here"
+   export FINITE_STATE_DOMAIN="your_domain.finitestate.io"
+   ```
+
+## Usage
+
+### License Report Generator
+
+#### Basic Examples
+
+**Generate CSV report for a project by ID:**
 ```bash
-python report_asset_risk_scores.py [options]
+python report_license.py --project-id 3161401371292730239
 ```
 
-**Options:**
-- `--url`: Finite State API URL (default: FINITE_STATE_URL environment variable)
-- `--token`: Finite State API token (default: FINITE_STATE_TOKEN environment variable)
-- `--start-date`: Start date for report (YYYY-MM-DD)
-- `--end-date`: End date for report (YYYY-MM-DD)
-- `--csv`: Export the report to a CSV file
-- `--verbose`: Show detailed information
-- `--asset-version-id`: Specific asset version ID to analyze
-
-**Output:** CSV file with columns:
-- Asset Name
-- Group
-- Version
-- Risk Score
-
-## Features
-
-### Date Range Filtering
-All reports support filtering by date range using the `--start-date` and `--end-date` options. Dates should be in YYYY-MM-DD format.
-
-Example:
+**Generate multiple formats for a project by name:**
 ```bash
-python report_asset_risk_scores.py --start-date 2024-01-01 --end-date 2024-03-31
+python report_license.py --project "WebGoat" --format csv,html
 ```
 
-### Parallel Processing
-Reports use parallel processing to improve performance when fetching data for multiple assets or versions.
+**Generate JSON report for a specific version:**
+```bash
+python report_license.py --version-id 3045724872466332389 --format json
+```
 
-### Rate Limiting
-Built-in rate limiting to prevent API throttling. Default is 10 requests per second.
+#### Command Line Options
 
-### Error Handling
-- Automatic retries for failed requests
-- Exponential backoff for rate limit errors
-- Clear error messages for common issues
+```bash
+usage: report_license.py (--project-id ID | --project NAME | --version-id ID)
+                    [--source sbom|components] [--format csv|json|html]
+                    [--outdir DIR] [--delimiter DELIM] 
+```
 
-## Common Options
+#### Project Selection (Required - choose one)
+- `--project-id ID` - Fetch latest version of the given project ID
+- `--project NAME` - Resolve project name to ID, then fetch latest version
+- `--version-id ID` - Skip project lookup, operate on specific version
 
-Most reports support the following options:
-- `--url`: Override the Finite State API URL
-- `--token`: Override the Finite State API token
-- `--start-date`: Filter data from this date (YYYY-MM-DD)
-- `--end-date`: Filter data until this date (YYYY-MM-DD)
-- `--csv`: Export to CSV file
-- `--verbose`: Show detailed information
+#### Optional Arguments
+- `--source {sbom,components}` - Data source (default: sbom)
+- `--format FORMAT` - Output formats: csv, json, html (comma-separated for multiple)
+- `--outdir DIR` - Output directory (default: ./reports)
+- `--delimiter DELIM` - Delimiter for multiple licenses (default: " | ")
+
+### Output Files
+
+Reports are generated in the specified output directory (default: `./reports/`):
+
+- `report_license.csv` - Tabular data in CSV format
+- `report_license.json` - Data grouped by component in JSON format
+- `report_license.html` - Searchable HTML report with DataTables
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Invalid API Token**
-   ```
-   Error: Invalid API token
-   ```
-   Solution: Check your FINITE_STATE_TOKEN environment variable or --token argument
+**"FINITE_STATE_AUTH_TOKEN environment variable is required"**
+- Ensure you've set the environment variable correctly
+- Check that your shell session has the variable loaded
 
-2. **Rate Limit Exceeded**
-   ```
-   Error: Rate limit exceeded
-   ```
-   Solution: The report will automatically retry with exponential backoff
+**"Project not found"**
+- Verify the project name or ID exists in your Finite State instance
+- Check your API token has access to the project
 
-3. **Invalid Date Format**
-   ```
-   Error: Invalid date format: 2024/01/01. Expected YYYY-MM-DD
-   ```
-   Solution: Use YYYY-MM-DD format for dates
+**"No components found"**
+- The project version may not have any components
+- Try a different version or project
 
-### Getting Help
+**"Individual license fetching not available"**
+- This is expected - individual component license endpoints may not be available
+- The tool will use whatever license data is available in the component data
 
-For additional help or to report issues, please contact support@finitestate.io 
+## API Endpoints Used
+
+The tools interact with these Finite State API endpoints:
+
+- `GET /components` - List all components (with pagination)
+- `GET /components?versionId={id}` - Get components for specific version
+- `GET /sboms/spdx/{versionId}` - Download SPDX SBOM
+- `GET /sboms/cyclonedx/{versionId}` - Download CycloneDX SBOM
+- `GET /components/{componentId}/licenses` - Get component licenses (may not be available)
+
+## Contributing
+
+When contributing to these tools:
+
+1. Follow the existing code style and patterns
+2. Add appropriate error handling
+3. Include progress indicators for long-running operations
+4. Test with the provided test constants
+5. Update documentation for new features
+6. Add new scripts to this README
+
+## License
+
+This tool is part of the Finite State SDK Python project. See the main LICENSE file for details. 

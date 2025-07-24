@@ -10,3 +10,7 @@ asset_version_comparison.csv
 report_asset_version_comparison.csv
 .finitestate/link.json
 examples/.env
+.cursorrules
+.DS_Store
+instructions.md
+__pycache__/report_license.cpython-313.pyc

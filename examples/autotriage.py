@@ -217,7 +217,8 @@ def get_component_triage_rules(token, org_context, artifact_id, component_name=N
                     'finding_id': finding.get('id', 'Unknown'),
                     'vulnerability': finding.get('vulnIdFromTool', 'Unknown'),
                     'title': finding.get('title', 'Unknown'),
-                    'description': finding.get('description', '')
+                    'description': finding.get('description', ''),
+                    'comment': current_status.get('comment') if current_status.get('comment') else None
                 })
                 if debug:
                     print(f"Added to triage rules for {key}")
@@ -235,10 +236,12 @@ def get_component_triage_rules(token, org_context, artifact_id, component_name=N
     
     return triage_rules
 
-def apply_triage_rules(token, org_context, target_artifact_id, triage_rules, user_id, source_artifact_id, dry_run=False, debug=False):
+def apply_triage_rules(token, org_context, target_artifact_id, triage_rules, user_id, source_artifact_id, dry_run=False, debug=False, update_comments=False, audit=False):
     """
     Apply triage rules to findings in the target artifact.
     If dry_run is True, only print what would be changed without making changes.
+    If update_comments is True, update findings if only the comment has changed.
+    If audit is True, add a traceability comment when status is updated and both source and target have no comment.
     """
     # Get all findings for the target artifact
     target_findings = get_findings(token, org_context, target_artifact_id)
@@ -298,40 +301,57 @@ def apply_triage_rules(token, org_context, target_artifact_id, triage_rules, use
                             print(f"Found matching vulnerability: {vulnerability_name}")
                         break
                 
-                if not matching_rule and debug:
-                    print(f"No matching vulnerability found for {vulnerability_name}")
+                if matching_rule:
+                    current_status = finding.get('currentStatus', {})
+                    if not isinstance(current_status, dict):
+                        current_status = {}
+                    current_comment = current_status.get('comment') if current_status.get('comment') else None
+                    # Only append an update if status has changed, or if update_comments is True and comment has changed
+                    status_changed = current_status.get('status') != matching_rule['status']
+                    comment_changed = current_comment != matching_rule.get('comment')
+                    if status_changed or (update_comments and comment_changed):
+                        finding_id = finding.get('id')
+                        if not finding_id:
+                            if debug:
+                                print(f"\nSkipping finding - no valid ID")
+                            continue
+                        update = {
+                            'id': finding_id,
+                            'status': matching_rule['status'],
+                            'component': component_name,
+                            'version': component_version,
+                            'vulnerability': vulnerability_name
+                        }
+                        # Only include 'comment' if the source finding has a comment, or if status is changing and both source and target have no comment and audit is set
+                        source_comment = matching_rule.get('comment')
+                        if source_comment is not None:
+                            update['comment'] = source_comment
+                        elif status_changed and audit:
+                            # Check if the target has a comment
+                            target_comment = None
+                            current_status = finding.get('currentStatus', {})
+                            if isinstance(current_status, dict):
+                                target_comment = current_status.get('comment')
+                            if not target_comment:
+                                update['comment'] = f'Replicated from source artifact {source_artifact_id}'
+                        updated_findings.append(update)
+                        if debug:
+                            print(f"\nWould update finding:")
+                            print(f"ID: {finding_id}")
+                            print(f"Component: {component_name} v{component_version}")
+                            print(f"Vulnerability: {vulnerability_name}")
+                            print(f"Current status: {current_status.get('status')}")
+                            print(f"Current comment: {current_comment}")
+                            print(f"New status: {matching_rule['status']}")
+                            print(f"New comment: {matching_rule.get('comment')}")
+                else:
+                    if debug:
+                        print(f"No matching vulnerability found for {vulnerability_name}")
                     unmatched_findings.append({
                         'component': component_name,
                         'version': component_version,
                         'vulnerability': vulnerability_name
                     })
-                
-                current_status = finding.get('currentStatus', {})
-                if not isinstance(current_status, dict):
-                    current_status = {}
-                    
-                if matching_rule and current_status.get('status') != matching_rule['status']:
-                    finding_id = finding.get('id')
-                    if not finding_id:
-                        if debug:
-                            print(f"\nSkipping finding - no valid ID")
-                        continue
-                        
-                    update = {
-                        'id': finding_id,
-                        'status': matching_rule['status'],
-                        'component': component_name,
-                        'version': component_version,
-                        'vulnerability': vulnerability_name
-                    }
-                    updated_findings.append(update)
-                    if debug:
-                        print(f"\nWould update finding:")
-                        print(f"ID: {finding_id}")
-                        print(f"Component: {component_name} v{component_version}")
-                        print(f"Vulnerability: {vulnerability_name}")
-                        print(f"Current status: {current_status.get('status')}")
-                        print(f"New status: {matching_rule['status']}")
             elif debug:
                 print(f"No matching component found for {key}")
                 unmatched_findings.append({
@@ -344,9 +364,28 @@ def apply_triage_rules(token, org_context, target_artifact_id, triage_rules, use
     if updated_findings:
         print("\nThe following changes would be made:")
         for update in updated_findings:
+            if not update or not isinstance(update, dict):
+                print("Warning: Encountered malformed update entry during dry run, skipping.", file=sys.stderr)
+                continue
             print(f"Component: {update['component']} (v{update['version']})")
             print(f"Vulnerability: {update['vulnerability']}")
             print(f"Status: {update['status']}")
+            # Show old and new comments for dry run
+            # Find the corresponding finding in target_findings to get the old comment
+            old_comment = None
+            for finding in target_findings:
+                if finding.get('id') == update['id']:
+                    current_status = finding.get('currentStatus', {})
+                    if isinstance(current_status, dict):
+                        old_comment = current_status.get('comment')
+                    break
+            # If update does not specify a new comment, the comment will be preserved
+            new_comment = update.get('comment') if 'comment' in update else old_comment
+            print(f"Old comment: {old_comment}")
+            print(f"New comment: {new_comment}")
+            # If both old and new comments are None, and audit is not set, print a note for clarity
+            if old_comment is None and new_comment is None and not (locals().get('audit', False)):
+                print("(No traceability comment will be added; use --audit to add one)")
             print("---")
         
         if not dry_run:
@@ -377,7 +416,7 @@ def apply_triage_rules(token, org_context, target_artifact_id, triage_rules, use
                                 finding_ids=[update['id']],
                                 status=update['status'],
                                 justification='COMPONENT_NOT_PRESENT' if update['status'] == 'NOT_AFFECTED' else None,
-                                comment=f'Replicated from source artifact {source_artifact_id}'
+                                **({'comment': update['comment']} if 'comment' in update else {})
                             )
                             success = True
                             break
@@ -417,6 +456,9 @@ def apply_triage_rules(token, org_context, target_artifact_id, triage_rules, use
         print("\nUnmatched findings:")
         print("=" * 80)
         for finding in unmatched_findings:
+            if not finding or not isinstance(finding, dict):
+                print("Warning: Encountered malformed unmatched finding entry during debug print, skipping.", file=sys.stderr)
+                continue
             print(f"Component: {finding['component']} (v{finding['version']})")
             print(f"Vulnerability: {finding['vulnerability']}")
             print("---")
@@ -430,6 +472,8 @@ def main():
     parser.add_argument('--component', help='Specific component name to replicate triage for')
     parser.add_argument('--version', help='Specific component version to replicate triage for')
     parser.add_argument('--debug', action='store_true', help='Enable debug output')
+    parser.add_argument('--update-comments', action='store_true', help='Update findings if only the comment has changed (not just status)')
+    parser.add_argument('--audit', action='store_true', help='Add a traceability comment when status is updated and both source and target have no comment')
     
     args = parser.parse_args()
     
@@ -467,7 +511,7 @@ def main():
                 
             # Apply triage rules to target artifact
             print(f"Applying triage rules to target artifact {args.target_artifact}...")
-            apply_triage_rules(token, org_context, args.target_artifact, triage_rules, user_id, args.source_artifact, args.dry_run, args.debug)
+            apply_triage_rules(token, org_context, args.target_artifact, triage_rules, user_id, args.source_artifact, args.dry_run, args.debug, args.update_comments, args.audit)
         
     except Exception as e:
         print(f"Error: {str(e)}", file=sys.stderr)

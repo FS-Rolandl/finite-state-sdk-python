@@ -6,3 +6,7 @@ token.txt
 /.idea/*
 /.python-version
 /docs-generation/.python-version
+asset_version_comparison.csv
+report_asset_version_comparison.csv
+.finitestate/link.json
+examples/.env
